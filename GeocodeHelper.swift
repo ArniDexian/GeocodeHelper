@@ -24,38 +24,39 @@ import Foundation
 import CoreLocation
 import MapKit
 
-class GeocodePlace {
+class GeocodePlace: NSObject {
     var name: String?
     var address: String?
     var location: CLLocation?
+    var phone: String?
+    var url: String?
 }
 
-typealias GeocodeHelperResultHandler = (places: [GeocodePlace]?) -> ()
 private let MIN_REQUEST_DELAY = 1.0
 private let MIN_QUERY_LENGTH = 2
 
-class GeocodeHelper {
+class GeocodeHelper: NSObject {
     static let shared = GeocodeHelper()
     
-    var completionHandler: GeocodeHelperResultHandler?
-
+    var completionHandler: ((_ places: [GeocodePlace]?) -> ())?
+    
     var minRequestDelay = MIN_REQUEST_DELAY
     var minQueryLength = MIN_QUERY_LENGTH
     
-    private weak var lastSearch: MKLocalSearch?
-    private var performBlock: PerformAfterClosure?
-    private var cache = NSCache()
+    fileprivate weak var lastSearch: MKLocalSearch?
+    fileprivate var performBlock: PerformAfterClosure?
+    fileprivate var cache = NSCache<AnyObject, AnyObject>()
     
-    func decode(searchTerm: String, completion: GeocodeHelperResultHandler) {
+    func decode(_ searchTerm: String, completion: @escaping (_ places: [GeocodePlace]?) -> ()) {
         completionHandler = completion
-        if searchTerm.length >= minQueryLength {
+        if searchTerm.characters.count >= minQueryLength {
             cancel()
             if let cached = cachedResult(searchTerm) {
                 completeRequest(cached)
             } else {
-                performBlock = performAfter(minRequestDelay, {[weak self] () -> Void in
+                performBlock = performAfter(minRequestDelay, closure: {[weak self] () -> Void in
                     self?.startGeocodeSearch(searchTerm)
-                    })
+                })
             }
         } else {
             completeRequest(nil)
@@ -69,58 +70,69 @@ class GeocodeHelper {
     
     // MARK: Private
     
-    private func completeRequest(places: [GeocodePlace]?) {
-        completionHandler?(places: places)
+    fileprivate func completeRequest(_ places: [GeocodePlace]?) {
+        completionHandler?(places)
     }
     
-    private func startGeocodeSearch(searchTerm: String) {
+    fileprivate func startGeocodeSearch(_ searchTerm: String) {
         let request = MKLocalSearchRequest()
         request.naturalLanguageQuery = searchTerm
         let search = MKLocalSearch(request: request)
-        search.startWithCompletionHandler { [weak self](response, error) -> Void in
+        search.start { [weak self](response, error) -> Void in
             if let err = error {
                 self?.didFailDecode(searchTerm, error: err)
             } else {
-                let res = (response.mapItems as? [MKMapItem])?.map{$0.placemark.geocoderPlace}
+                let res = response?.mapItems.map{$0.geocoderPlace}
                 self?.didDecode(searchTerm, places: res)
             }
         }
         lastSearch = search
     }
     
-    private func didFailDecode(searchTerm: String, error: NSError!) {
-        switch MKErrorCode(rawValue: UInt(error.code)) {
-        case .Some(.PlacemarkNotFound):
+    fileprivate func didFailDecode(_ searchTerm: String, error: Error!) {
+        switch MKError(_nsError: error as NSError).code {
+        case .placemarkNotFound:
             fallthrough
-        case .Some(.DirectionsNotFound):
+        case .directionsNotFound:
             didDecode(searchTerm, places: nil)
         default:
-            println("GeocodeHelper error decode \(searchTerm) \(error.localizedDescription)")
+            print("GeocodeHelper error decode \(searchTerm) \(error.localizedDescription)")
         }
     }
-
-    private func didDecode(searchTerm: String, places: [GeocodePlace]?) {
+    
+    fileprivate func didDecode(_ searchTerm: String, places: [GeocodePlace]?) {
         cacheResult(searchTerm, places: places)
         completeRequest(places)
     }
     
-    private func cacheResult(searchTerm: String, places: [GeocodePlace]?) {
+    fileprivate func cacheResult(_ searchTerm: String, places: [GeocodePlace]?) {
         let cachePlace = places == nil ? [GeocodePlace]() : places!
-        cache.setObject(cachePlace , forKey: searchTerm)
+        cache.setObject(cachePlace as AnyObject , forKey: searchTerm as AnyObject)
     }
     
-    private func cachedResult(searchTerm: String) -> [GeocodePlace]? {
-        let cahced = cache.objectForKey(searchTerm) as? [GeocodePlace]
-        return cahced?.count > 0 ? cahced : nil
+    fileprivate func cachedResult(_ searchTerm: String) -> [GeocodePlace]? {
+        if let cached = cache.object(forKey: searchTerm as AnyObject) as? [GeocodePlace] {
+            return cached.count > 0 ? cached : nil
+        }
+        return nil
+    }
+}
+
+extension MKMapItem {
+    var geocoderPlace: GeocodePlace {
+        let place = placemark.geocoderPlace
+        place.phone = phoneNumber
+        place.url = url?.absoluteString
+        return place
     }
 }
 
 extension CLPlacemark {
     var geocoderPlace: GeocodePlace {
-        var place = GeocodePlace()
+        let place = GeocodePlace()
         place.name = name
-        if let addrList = addressDictionary["FormattedAddressLines"] as? [String] {
-            place.address =  join(", ", addrList)
+        if let addrList = addressDictionary?["FormattedAddressLines"] as? [String] {
+            place.address =  addrList.joined(separator: ", ")
         }
         place.location = location
         return place

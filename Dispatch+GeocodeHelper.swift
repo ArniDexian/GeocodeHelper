@@ -22,25 +22,21 @@
 
 import Foundation
 
-typealias PerformAfterClosure = (cancel: Bool) -> ()
+typealias PerformAfterClosure = (_ cancel: Bool) -> ()
 
-func delay(delay: Double, closure: ()->()) {
-    dispatch_after(
-        dispatch_time(
-            DISPATCH_TIME_NOW,
-            Int64(delay * Double(NSEC_PER_SEC))
-        ),
-        dispatch_get_main_queue(), closure)
+func delay(_ delay: Double, closure: @escaping ()->()) {
+    DispatchQueue.main.asyncAfter(
+        deadline: DispatchTime.now() + Double(Int64(delay * Double(NSEC_PER_SEC))) / Double(NSEC_PER_SEC), execute: closure)
 }
 
-func performAfter(delayTime: Double, closure: dispatch_block_t) -> PerformAfterClosure? {
-    var closure: dispatch_block_t? = closure
+func performAfter(_ delayTime: Double, closure: @escaping ()->()) -> PerformAfterClosure? {
+    var closure: (()->())? = closure
     var performClosure: PerformAfterClosure?
     
     let delayedClosure: PerformAfterClosure = { cancel in
         if let uclosure = closure {
             if !cancel {
-                dispatch_async(dispatch_get_main_queue(), uclosure)
+                DispatchQueue.main.async(execute: uclosure)
             }
         }
         closure = nil
@@ -49,17 +45,17 @@ func performAfter(delayTime: Double, closure: dispatch_block_t) -> PerformAfterC
     
     performClosure = delayedClosure
     
-    delay(delayTime, {
+    delay(delayTime, closure: {
         if let delayedClosure = performClosure {
-            delayedClosure(cancel: false)
+            delayedClosure(false)
         }
     })
     
     return performClosure
 }
 
-func cancelPerformAfter(closure: PerformAfterClosure?) {
+func cancelPerformAfter(_ closure: PerformAfterClosure?) {
     if let uclosure = closure {
-        uclosure(cancel: true)
+        uclosure(true)
     }
 }
